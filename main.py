@@ -9,7 +9,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from PIL import Image # Add 'Pillow' to your pip install list
 
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ['NVDA', 'TSLA']
+TICKERS = ['NVDA']
 
 def setup_driver():
     options = Options()
