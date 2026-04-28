@@ -12,7 +12,7 @@ from PIL import Image
 
 # --- CONFIGURATION ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ['SPY'] 
+TICKERS = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMD', 'MU', 'MSFT'] 
 EXPIRY = '7'
 DTE = '30'
 
@@ -45,10 +45,11 @@ def main():
             
             # --- PHASE 1: CAPTURE CHART ---
             driver.get(chart_url)
-            time.sleep(15) 
+            time.sleep(15) # Wait for animation
             full_path = f"full_{ticker}.png"
             driver.save_screenshot(full_path)
             
+            # Crop Chart: (left, top, right, bottom)
             img = Image.open(full_path)
             chart_img = img.crop((450, 180, 1500, 950)) 
             crop_path = f"{ticker}_final.png"
@@ -60,34 +61,32 @@ def main():
             # --- PHASE 2: SCRAPE DATA (WITH ASYNC DATE FIX) ---
             driver.get(data_url)
             
-            # This JS block forces a wait for the first column's content
-            result = driver.execute_script("""
+            # This JS block forces the browser to wait for content in Column A
+            result = driver.execute_async_script("""
+                const callback = arguments[arguments.length - 1];
                 const waitLimit = 15000; 
                 const start = Date.now();
                 
-                async function getData() {
-                    // Poll until the first cell has a length > 0
-                    while (Date.now() - start < waitLimit) {
-                        const firstCell = document.querySelector('tr td, tr th');
-                        if (firstCell && firstCell.innerText.trim().length > 0) break;
-                        await new Promise(r => setTimeout(r, 1000));
+                const checkData = setInterval(() => {
+                    const firstCell = document.querySelector('tr td, tr th');
+                    const hasText = firstCell && firstCell.innerText.trim().length > 0;
+                    const timedOut = (Date.now() - start) > waitLimit;
+
+                    if (hasText || timedOut) {
+                        clearInterval(checkData);
+                        
+                        const rows = Array.from(document.querySelectorAll('tr'));
+                        const values = rows.map(row => 
+                            Array.from(row.querySelectorAll('td, th')).map(cell => cell.innerText.trim())
+                        ).filter(r => r.length > 0 && r[0] !== "");
+
+                        const colors = rows.map(row => 
+                            Array.from(row.querySelectorAll('td, th')).map(cell => window.getComputedStyle(cell).backgroundColor)
+                        ).filter(r => r.length > 0);
+
+                        callback({ values, colors });
                     }
-
-                    const rows = Array.from(document.querySelectorAll('tr'));
-                    
-                    // Capture text values including sticky headers
-                    const values = rows.map(row => 
-                        Array.from(row.querySelectorAll('td, th')).map(cell => cell.innerText.trim())
-                    ).filter(r => r.length > 0 && r[0] !== "");
-
-                    // Capture background colors for heatmap
-                    const colors = rows.map(row => 
-                        Array.from(row.querySelectorAll('td, th')).map(cell => window.getComputedStyle(cell).backgroundColor)
-                    ).filter(r => r.length > 0);
-
-                    return { values, colors };
-                }
-                return getData();
+                }, 1000);
             """)
 
             # --- PHASE 3: SYNC ---
@@ -102,7 +101,7 @@ def main():
             }
 
             res = requests.post(WEBAPP_URL, json=payload, timeout=60)
-            print(f"Sync Result: {res.text}")
+            print(f"Sync Result for {ticker}: {res.text}")
                 
     finally:
         driver.quit()
