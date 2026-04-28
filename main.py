@@ -13,7 +13,8 @@ from PIL import Image
 
 # --- CONFIGURATION ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ["SPX", "SPY", "QQQ", "MU","NVDA", "SNDK", "AAOI", "TSLA", "NBIS", "CRWV", "AMD", "PANW", "ASTS", "UNH"] 
+#TICKERS = ["SPX", "SPY", "QQQ", "MU","NVDA", "SNDK", "AAOI", "TSLA", "NBIS", "CRWV", "AMD", "PANW", "ASTS", "UNH"] 
+TICKERS = ["SPY"] 
 EXPIRY = '7'
 DTE = '30'
 
