@@ -7,7 +7,7 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
 # --- CONFIGURATION ---
-TICKERS = ['NVDA', 'AAPL', 'TSLA']
+TICKERS = ['NVDA']
 EXPIRY = '7'
 # Paste your Web App URL into a GitHub Secret named WEBAPP_URL
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
