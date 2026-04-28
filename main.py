@@ -12,7 +12,7 @@ from PIL import Image
 
 # --- CONFIGURATION ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMD', 'MU', 'MSFT'] 
+TICKERS = ['SPY'] 
 EXPIRY = '7'
 DTE = '30'
 
