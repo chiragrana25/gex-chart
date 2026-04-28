@@ -12,7 +12,7 @@ from PIL import Image
 
 # --- CONFIGURATION ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ['SPY'] 
+TICKERS = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMD', 'MU', 'MSFT'] 
 EXPIRY = '7'
 DTE = '30'
 
@@ -40,17 +40,15 @@ def main():
     try:
         for ticker in TICKERS:
             print(f"Processing {ticker}...")
-            # 1. URLS
             chart_url = f"https://mztrading.netlify.app/options/analyze/{ticker}?dgextab=GEX&expiry={EXPIRY}"
             data_url = f"https://mztrading.netlify.app/options/analyze/{ticker}?dgextab=GEX&dte={DTE}&showHeatmap=true"
             
-            # 2. CAPTURE CHART IMAGE
+            # --- PHASE 1: CAPTURE CHART ---
             driver.get(chart_url)
             time.sleep(15) # Wait for animation
             full_path = f"full_{ticker}.png"
             driver.save_screenshot(full_path)
             
-            # Crop Chart
             img = Image.open(full_path)
             chart_img = img.crop((450, 180, 1500, 950)) 
             crop_path = f"{ticker}_final.png"
@@ -59,38 +57,48 @@ def main():
             with open(crop_path, "rb") as img_file:
                 b64_image = base64.b64encode(img_file.read()).decode('utf-8')
 
-            # 3. SCRAPE TABLE DATA
+            # --- PHASE 2: SCRAPE DATA (WITH DATE FIX) ---
             driver.get(data_url)
-            time.sleep(8) # Wait for table hydration
             
-            # Using execute_script to pull the clean text from every cell (fixes missing dates)
-            values_table = driver.execute_script("""
-                return Array.from(document.querySelectorAll('tr')).map(row => 
-                    Array.from(row.querySelectorAll('td, th')).map(cell => cell.innerText.trim())
-                ).filter(r => r.length > 0 && r[0] !== "");
-            """)
-            
-            # Capture background colors for the heatmap
-            colors_table = driver.execute_script("""
-                return Array.from(document.querySelectorAll('tr')).map(row => 
-                    Array.from(row.querySelectorAll('td, th')).map(cell => window.getComputedStyle(cell).backgroundColor)
-                ).filter(r => r.length > 0);
+            # This JS block waits for the 'Sticky' date column to populate before returning
+            result = driver.execute_script("""
+                const waitLimit = 15000; 
+                const start = Date.now();
+                
+                async function getData() {
+                    while (Date.now() - start < waitLimit) {
+                        const firstCell = document.querySelector('tr td, tr th');
+                        if (firstCell && firstCell.innerText.trim().length > 0) break;
+                        await new Promise(r => setTimeout(r, 500));
+                    }
+
+                    const rows = Array.from(document.querySelectorAll('tr'));
+                    const values = rows.map(row => 
+                        Array.from(row.querySelectorAll('td, th')).map(cell => cell.innerText.trim())
+                    ).filter(r => r.length > 0 && r[0] !== "");
+
+                    const colors = rows.map(row => 
+                        Array.from(row.querySelectorAll('td, th')).map(cell => window.getComputedStyle(cell).backgroundColor)
+                    ).filter(r => r.length > 0);
+
+                    return { values, colors };
+                }
+                return getData();
             """)
 
-            # 4. CONSTRUCT PAYLOAD
+            # --- PHASE 3: SYNC ---
             now_est = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=4)).strftime("%I:%M %p")
             payload = {
                 "ticker": ticker,
                 "price": get_live_price(ticker),
                 "updated": now_est,
-                "values": values_table,
-                "colors": colors_table,
+                "values": result['values'],
+                "colors": result['colors'],
                 "imageData": b64_image
             }
 
-            # 5. SEND TO GOOGLE
             res = requests.post(WEBAPP_URL, json=payload, timeout=60)
-            print(f"Sync Result for {ticker}: {res.text}")
+            print(f"Sync Result: {res.text}")
                 
     finally:
         driver.quit()
