@@ -10,62 +10,68 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+# --- SETTINGS ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
+TICKERS = ['NVDA', 'TSLA', 'AAPL', 'AMD'] 
+EXPIRY = '7'
 
 def setup_driver():
     options = Options()
-    options.add_argument('--headless=new') # Uses the newer, more stable headless mode
+    options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1920,1080')
+    options.add_argument('--window-size=1920,1200')
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def main():
+    if not WEBAPP_URL:
+        print("CRITICAL ERROR: WEBAPP_URL secret is missing!")
+        return
+
     driver = setup_driver()
-    tickers = ['NVDA', 'TSLA'] # Updated list
     
     try:
-        for ticker in tickers:
-            print(f"Attempting to capture {ticker}...")
-            url = f"https://mztrading.netlify.app/options/analyze/{ticker}?expiry=7"
+        for ticker in TICKERS:
+            print(f"Processing {ticker}...")
+            url = f"https://mztrading.netlify.app/options/analyze/{ticker}?expiry={EXPIRY}"
             driver.get(url)
             
-            # 1. Increase wait time to 45s for slow API responses
             wait = WebDriverWait(driver, 45)
             
             try:
-                # 2. Wait for ANY SVG element (Recharts uses SVGs for its charts)
-                # This is more reliable than a class name that might change
-                wait.until(EC.presence_of_element_located((By.TAG_NAME, "svg")))
+                # Wait for the chart (SVG) to be visible
+                chart_element = wait.until(EC.visibility_of_element_located((By.TAG_NAME, "svg")))
                 
-                # 3. Scroll to the bottom and back up to force rendering
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(2)
-                driver.execute_script("window.scrollTo(0, 0);")
+                # IMPORTANT: Sleep to allow Recharts animations to finish
+                time.sleep(6) 
                 
-                # 4. Try finding the chart wrapper or the main content container
-                # We'll take a screenshot of the main 'main' tag if specific wrapper fails
-                try:
-                    target = driver.find_element(By.CLASS_NAME, "recharts-wrapper")
-                except:
-                    target = driver.find_element(By.TAG_NAME, "main")
-                
+                # Capture screenshot of the chart element
                 path = f"{ticker}.png"
-                target.screenshot(path)
+                chart_element.screenshot(path)
                 
-                # Upload logic
+                # Check file size for debugging
+                file_size = os.path.getsize(path)
+                print(f"Captured {ticker} ({file_size} bytes)")
+
+                if file_size < 1000:
+                    print(f"Warning: {ticker} image seems too small/empty.")
+
+                # Encode to Base64
                 with open(path, "rb") as img_file:
                     b64_string = base64.b64encode(img_file.read()).decode('utf-8')
+
+                # Send to Google Apps Script
+                payload = {
+                    "ticker": ticker,
+                    "imageData": b64_string
+                }
                 
-                payload = {"ticker": ticker, "status": "Success", "imageData": b64_string}
-                requests.post(WEBAPP_URL, json=payload, timeout=30)
-                print(f"Successfully processed {ticker}")
-                
+                response = requests.post(WEBAPP_URL, json=payload, timeout=30)
+                print(f"Response from Google: {response.text}")
+
             except Exception as e:
-                # 5. Diagnostic: Take a full page screenshot if it fails to help you see what went wrong
-                driver.save_screenshot(f"ERROR_{ticker}.png")
-                print(f"Failed {ticker}. Check ERROR_{ticker}.png in artifacts. Error: {e}")
+                print(f"Failed to capture {ticker}: {e}")
                 
     finally:
         driver.quit()
