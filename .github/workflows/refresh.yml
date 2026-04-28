@@ -1,9 +1,9 @@
-name: Options Chart Refresh
+name: GEX Combined Scraper
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
-  workflow_dispatch: # Allows you to run it manually to test
+    - cron: '*/30 * * * *' # Every 30 minutes
+  workflow_dispatch:
 
 jobs:
   refresh:
@@ -19,17 +19,9 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install selenium requests webdriver-manager
-          pip install selenium requests webdriver-manager Pillow
+          pip install selenium requests webdriver-manager Pillow yfinance
 
-      - name: Run Script
+      - name: Run Scraper
         env:
           WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
         run: python main.py
-        
-      - name: Upload Error Screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagnostic-screenshots
-          path: ERROR_*.png
