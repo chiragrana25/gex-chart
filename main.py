@@ -10,68 +10,61 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# --- SETTINGS ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ['NVDA', 'TSLA', 'AAPL', 'AMD'] 
-EXPIRY = '7'
+TICKERS = ['NVDA', 'TSLA', 'AAPL', 'AMD']
 
 def setup_driver():
     options = Options()
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1920,1200')
+    options.add_argument('--window-size=1920,1080')
+    # Use a very specific, modern User-Agent
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def main():
     if not WEBAPP_URL:
-        print("CRITICAL ERROR: WEBAPP_URL secret is missing!")
+        print("WEBAPP_URL missing")
         return
 
     driver = setup_driver()
-    
+    # Stealth mode: hide Selenium fingerprint
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
     try:
         for ticker in TICKERS:
             print(f"Processing {ticker}...")
-            url = f"https://mztrading.netlify.app/options/analyze/{ticker}?expiry={EXPIRY}"
-            driver.get(url)
+            driver.get(f"https://mztrading.netlify.app/options/analyze/{ticker}?expiry=7")
             
-            wait = WebDriverWait(driver, 45)
+            wait = WebDriverWait(driver, 30)
             
             try:
-                # Wait for the chart (SVG) to be visible
+                # Wait for the main container to load first
+                wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                
+                # Wait for the SVG (the chart)
                 chart_element = wait.until(EC.visibility_of_element_located((By.TAG_NAME, "svg")))
                 
-                # IMPORTANT: Sleep to allow Recharts animations to finish
-                time.sleep(6) 
+                time.sleep(7) # Extra buffer for animations
                 
-                # Capture screenshot of the chart element
                 path = f"{ticker}.png"
                 chart_element.screenshot(path)
                 
-                # Check file size for debugging
-                file_size = os.path.getsize(path)
-                print(f"Captured {ticker} ({file_size} bytes)")
-
-                if file_size < 1000:
-                    print(f"Warning: {ticker} image seems too small/empty.")
-
-                # Encode to Base64
                 with open(path, "rb") as img_file:
                     b64_string = base64.b64encode(img_file.read()).decode('utf-8')
 
-                # Send to Google Apps Script
-                payload = {
-                    "ticker": ticker,
-                    "imageData": b64_string
-                }
-                
-                response = requests.post(WEBAPP_URL, json=payload, timeout=30)
-                print(f"Response from Google: {response.text}")
+                payload = {"ticker": ticker, "imageData": b64_string}
+                requests.post(WEBAPP_URL, json=payload, timeout=30)
+                print(f"Uploaded {ticker}")
 
             except Exception as e:
-                print(f"Failed to capture {ticker}: {e}")
+                # DIAGNOSTIC: Save a screenshot of what the bot actually sees
+                error_path = f"ERROR_{ticker}.png"
+                driver.save_screenshot(error_path)
+                print(f"Failed {ticker}. Saved diagnostic screenshot to {error_path}. Error: {e}")
                 
     finally:
         driver.quit()
