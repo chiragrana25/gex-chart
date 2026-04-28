@@ -18,8 +18,10 @@ WEBAPP_URL = os.environ.get('WEBAPP_URL')
 TICKERS = ['SPY'] 
 
 def rgb_to_hex(rgb_str):
-    """Converts rgb(r,g,b) to #RRGGBB"""
+    if not rgb_str or 'rgba(0, 0, 0, 0)' in rgb_str or 'transparent' in rgb_str:
+        return "#FFFFFF"
     try:
+        # Extract numbers from "rgb(1, 2, 3)"
         nums = re.findall(r'\d+', rgb_str)
         if len(nums) >= 3:
             return '#{:02x}{:02x}{:02x}'.format(int(nums[0]), int(nums[1]), int(nums[2]))
