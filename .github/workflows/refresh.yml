@@ -25,3 +25,10 @@ jobs:
         env:
           WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
         run: python main.py
+        
+      - name: Upload Error Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-screenshots
+          path: ERROR_*.png
