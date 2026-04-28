@@ -45,7 +45,7 @@ def main():
             
             # --- PHASE 1: CAPTURE CHART ---
             driver.get(chart_url)
-            time.sleep(15) # Wait for animation
+            time.sleep(15) 
             full_path = f"full_{ticker}.png"
             driver.save_screenshot(full_path)
             
@@ -57,26 +57,30 @@ def main():
             with open(crop_path, "rb") as img_file:
                 b64_image = base64.b64encode(img_file.read()).decode('utf-8')
 
-            # --- PHASE 2: SCRAPE DATA (WITH DATE FIX) ---
+            # --- PHASE 2: SCRAPE DATA (WITH ASYNC DATE FIX) ---
             driver.get(data_url)
             
-            # This JS block waits for the 'Sticky' date column to populate before returning
+            # This JS block forces a wait for the first column's content
             result = driver.execute_script("""
                 const waitLimit = 15000; 
                 const start = Date.now();
                 
                 async function getData() {
+                    // Poll until the first cell has a length > 0
                     while (Date.now() - start < waitLimit) {
                         const firstCell = document.querySelector('tr td, tr th');
                         if (firstCell && firstCell.innerText.trim().length > 0) break;
-                        await new Promise(r => setTimeout(r, 500));
+                        await new Promise(r => setTimeout(r, 1000));
                     }
 
                     const rows = Array.from(document.querySelectorAll('tr'));
+                    
+                    // Capture text values including sticky headers
                     const values = rows.map(row => 
                         Array.from(row.querySelectorAll('td, th')).map(cell => cell.innerText.trim())
                     ).filter(r => r.length > 0 && r[0] !== "");
 
+                    // Capture background colors for heatmap
                     const colors = rows.map(row => 
                         Array.from(row.querySelectorAll('td, th')).map(cell => window.getComputedStyle(cell).backgroundColor)
                     ).filter(r => r.length > 0);
