@@ -9,7 +9,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from PIL import Image
 
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ['NVDA', 'TSLA', 'AAPL', 'AMD']
+TICKERS = ['NVDA']
 
 def setup_driver():
     options = Options()
@@ -39,7 +39,7 @@ def main():
             # (left, top, right, bottom)
             # Increased 'left' to 300 to cut off the sidebar/filler
             # Increased 'right' to 1300 to capture the full width of the chart
-            left = 280   
+            left = 450   
             top = 180    
             right = 1450 
             bottom = 950 
