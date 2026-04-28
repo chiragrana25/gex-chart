@@ -6,17 +6,18 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
-from PIL import Image # Add 'Pillow' to your pip install list
+from PIL import Image
 
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ['NVDA']
+TICKERS = ['NVDA', 'TSLA', 'AAPL', 'AMD']
 
 def setup_driver():
     options = Options()
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1200,1600') # Tall window to capture chart + table
+    # Use a wider window so the sidebar/filler doesn't push the chart out
+    options.add_argument('--window-size=1600,1200') 
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
@@ -27,18 +28,25 @@ def main():
             print(f"Processing {ticker}...")
             driver.get(f"https://mztrading.netlify.app/options/analyze/{ticker}?expiry=7")
             
-            # Static wait since we know the site works but Selenium is being finicky with detection
-            time.sleep(12) 
+            # Wait for data to load and animations to settle
+            time.sleep(15) 
             
-            # Save the full page
             full_path = f"full_{ticker}.png"
             driver.save_screenshot(full_path)
             
-            # CROP THE IMAGE (Top 700 pixels usually covers the chart on this site)
-            # This ensures we always have an image to send even if selectors fail
+            # --- TWEAK CROP COORDINATES HERE ---
+            # (left, top, right, bottom)
+            # Increased 'left' to 300 to cut off the sidebar/filler
+            # Increased 'right' to 1300 to capture the full width of the chart
+            left = 280   
+            top = 180    
+            right = 1450 
+            bottom = 950 
+            
             img = Image.open(full_path)
-            chart_img = img.crop((0, 150, 1000, 850)) # (left, top, right, bottom)
-            crop_path = f"{ticker}_cropped.png"
+            chart_img = img.crop((left, top, right, bottom))
+            
+            crop_path = f"{ticker}_final.png"
             chart_img.save(crop_path)
 
             with open(crop_path, "rb") as img_file:
