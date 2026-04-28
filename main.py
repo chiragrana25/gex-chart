@@ -10,7 +10,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 TICKERS = ['NVDA', 'AAPL', 'TSLA']
 EXPIRY = '7'
 # Paste your Web App URL into a GitHub Secret named WEBAPP_URL
-WEBAPP_URL = os.environ.get('https://script.google.com/macros/s/AKfycbyvLapxCxo2u-Sy8EDNBmZLLiPwfWoVjHFkuNtRDuviS6lmYX34Mq-aD8SQStzMMj5RJA/exec')
+WEBAPP_URL = os.environ.get('WEBAPP_URL')
 
 def setup_driver():
     options = Options()
