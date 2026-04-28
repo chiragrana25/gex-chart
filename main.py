@@ -8,6 +8,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
 from PIL import Image
 
 # --- CONFIGURATION ---
@@ -31,6 +32,15 @@ def get_live_price(ticker):
         return f"{stock.fast_info['last_price']:.2f}"
     except: return "N/A"
 
+def rgb_to_hex(rgb_str):
+    if not rgb_str or 'rgba(0, 0, 0, 0)' in rgb_str or 'transparent' in rgb_str:
+        return "#FFFFFF"
+    try:
+        # Extracts numbers from "rgb(1, 2, 3)" or "rgba(1, 2, 3, 1)"
+        nums = [int(x) for x in rgb_str.replace('rgb', '').replace('a', '').replace('(', '').replace(')', '').split(',')[:3]]
+        return '#{:02x}{:02x}{:02x}'.format(*nums)
+    except: return "#FFFFFF"
+
 def main():
     if not WEBAPP_URL:
         print("CRITICAL: WEBAPP_URL secret is missing!")
@@ -40,16 +50,13 @@ def main():
     try:
         for ticker in TICKERS:
             print(f"Processing {ticker}...")
+            # 1. Capture Chart (7-Day)
             chart_url = f"https://mztrading.netlify.app/options/analyze/{ticker}?dgextab=GEX&expiry={EXPIRY}"
-            data_url = f"https://mztrading.netlify.app/options/analyze/{ticker}?dgextab=GEX&dte={DTE}&showHeatmap=true"
-            
-            # --- PHASE 1: CAPTURE CHART ---
             driver.get(chart_url)
-            time.sleep(15) # Wait for animation
+            time.sleep(15) 
+            
             full_path = f"full_{ticker}.png"
             driver.save_screenshot(full_path)
-            
-            # Crop Chart: (left, top, right, bottom)
             img = Image.open(full_path)
             chart_img = img.crop((450, 180, 1500, 950)) 
             crop_path = f"{ticker}_final.png"
@@ -58,50 +65,42 @@ def main():
             with open(crop_path, "rb") as img_file:
                 b64_image = base64.b64encode(img_file.read()).decode('utf-8')
 
-            # --- PHASE 2: SCRAPE DATA (WITH ASYNC DATE FIX) ---
+            # 2. Capture Data (30-Day Heatmap)
+            data_url = f"https://mztrading.netlify.app/options/analyze/{ticker}?dgextab=GEX&dte={DTE}&showHeatmap=true"
             driver.get(data_url)
+            time.sleep(10) # Essential wait for sticky columns to hydrate
+
+            values_table = []
+            colors_table = []
             
-            # This JS block forces the browser to wait for content in Column A
-            result = driver.execute_async_script("""
-                const callback = arguments[arguments.length - 1];
-                const waitLimit = 15000; 
-                const start = Date.now();
+            # Re-implementing your working extraction logic for Selenium
+            rows = driver.find_elements(By.TAG_NAME, "tr")
+            for row in rows:
+                cells = row.find_elements(By.CSS_SELECTOR, "td, th")
+                if not cells: continue
                 
-                const checkData = setInterval(() => {
-                    const firstCell = document.querySelector('tr td, tr th');
-                    const hasText = firstCell && firstCell.innerText.trim().length > 0;
-                    const timedOut = (Date.now() - start) > waitLimit;
+                # 'execute_script' is Selenium's equivalent to Playwright's 'evaluate'
+                v_row = [driver.execute_script("return arguments[0].innerText;", c).strip() for c in cells]
+                
+                if v_row and any(v_row):
+                    values_table.append(v_row)
+                    # Catch the background color for heatmap
+                    bg_color = [driver.execute_script("return window.getComputedStyle(arguments[0]).backgroundColor;", c) for c in cells]
+                    colors_table.append([rgb_to_hex(color) for color in bg_color])
 
-                    if (hasText || timedOut) {
-                        clearInterval(checkData);
-                        
-                        const rows = Array.from(document.querySelectorAll('tr'));
-                        const values = rows.map(row => 
-                            Array.from(row.querySelectorAll('td, th')).map(cell => cell.innerText.trim())
-                        ).filter(r => r.length > 0 && r[0] !== "");
-
-                        const colors = rows.map(row => 
-                            Array.from(row.querySelectorAll('td, th')).map(cell => window.getComputedStyle(cell).backgroundColor)
-                        ).filter(r => r.length > 0);
-
-                        callback({ values, colors });
-                    }
-                }, 1000);
-            """)
-
-            # --- PHASE 3: SYNC ---
+            # 3. Sync
             now_est = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=4)).strftime("%I:%M %p")
             payload = {
                 "ticker": ticker,
                 "price": get_live_price(ticker),
                 "updated": now_est,
-                "values": result['values'],
-                "colors": result['colors'],
+                "values": values_table,
+                "colors": colors_table,
                 "imageData": b64_image
             }
 
             res = requests.post(WEBAPP_URL, json=payload, timeout=60)
-            print(f"Sync Result for {ticker}: {res.text}")
+            print(f"Sync {ticker}: {res.text}")
                 
     finally:
         driver.quit()
