@@ -6,6 +6,8 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
@@ -16,10 +18,11 @@ def setup_driver():
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920,1080')
+    # Set a custom user agent so the site treats the bot like a real browser
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def update_sheet_with_image(ticker, image_path):
-    # Convert image to Base64 string
     with open(image_path, "rb") as img_file:
         b64_string = base64.b64encode(img_file.read()).decode('utf-8')
 
@@ -30,28 +33,37 @@ def update_sheet_with_image(ticker, image_path):
         "mimeType": "image/png"
     }
     
-    response = requests.post(WEBAPP_URL, json=payload)
-    print(f"Uploaded {ticker}: {response.text}")
+    try:
+        response = requests.post(WEBAPP_URL, json=payload, timeout=30)
+        print(f"Uploaded {ticker}: {response.text}")
+    except Exception as e:
+        print(f"Failed to send to Google Sheets: {e}")
 
 def main():
     driver = setup_driver()
-    tickers = ['NVDA', 'AAPL'] # Add yours
+    tickers = ['NVDA'] # Add more tickers here
     
     try:
         for ticker in tickers:
+            print(f"Analyzing {ticker}...")
             driver.get(f"https://mztrading.netlify.app/options/analyze/{ticker}?expiry=7")
-            time.sleep(10) # Give the chart plenty of time to render
             
-            # Find the chart element and save it
+            # Use Explicit Wait for up to 30 seconds
+            wait = WebDriverWait(driver, 30)
             try:
-                # 'recharts-wrapper' is the container for the charts on that site
-                chart = driver.find_element(By.CLASS_NAME, "recharts-wrapper")
-                path = f"{ticker}.png"
-                chart.screenshot(path)
+                # 1. Wait for the chart container to exist in the DOM
+                # 2. Wait for it to be visible on screen
+                chart_element = wait.until(EC.visibility_of_element_located((By.CLASS_NAME, "recharts-wrapper")))
                 
+                # Give it an extra 2 seconds to ensure the animations are finished
+                time.sleep(2) 
+                
+                path = f"{ticker}.png"
+                chart_element.screenshot(path)
                 update_sheet_with_image(ticker, path)
+                
             except Exception as e:
-                print(f"Failed to capture {ticker}: {e}")
+                print(f"Could not find chart for {ticker}. The site might be slow or the selector changed. Error: {e}")
                 
     finally:
         driver.quit()
