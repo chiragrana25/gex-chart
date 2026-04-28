@@ -2,27 +2,21 @@ name: Options Data Refresh
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Runs every 15 minutes
-  workflow_dispatch: # Allows manual trigger
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
+      - uses: actions/checkout@v3
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-
       - name: Install dependencies
-        run: |
-          pip install selenium gspread oauth2client webdriver-manager
-
+        run: pip install selenium requests webdriver-manager
       - name: Run Scraper
         env:
-          # This pulls the JSON from your GitHub Repository Secrets
-          G_SHEETS_CREDS: ${{ secrets.G_SHEETS_CREDS }}
+          WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
         run: python main.py
