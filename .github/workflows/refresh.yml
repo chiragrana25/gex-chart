@@ -20,6 +20,7 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install selenium requests webdriver-manager
+          pip install selenium requests webdriver-manager Pillow
 
       - name: Run Script
         env:
