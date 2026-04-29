@@ -51,38 +51,39 @@ def capture_chart(ticker):
 
 def scrape_ticker(context, ticker):
     clean_ticker = ticker.replace('^', '')
-    # Start with the URL, but we will add a 'kickstart' scroll
-    url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true"
+    url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX"
     page = context.new_page()
+    page.set_default_timeout(120000)
     
-    # Increase the internal navigation timeout
-    page.set_default_timeout(180000) 
-    
-    print(f"[{clean_ticker}] Scraping Heatmap...")
+    print(f"[{clean_ticker}] Scoping 30D Heatmap...")
     price = get_live_price(ticker)
     chart_b64 = capture_chart(ticker)
     
     try:
-        # Use 'domcontentloaded' to get in fast, then we handle the wait
+        # 1. Load the base page
         page.goto(url, wait_until="domcontentloaded")
         
-        # --- NEW: ANTI-STALL SCROLL ---
-        # Some sites in 2026 use lazy-loading that only triggers on scroll
-        page.mouse.wheel(0, 500)
-        time.sleep(2)
-        page.mouse.wheel(0, -500)
+        # 2. UI INTERACTION: Find and click the '30' DTE button
+        # This bypasses the URL bug by physically clicking the toggle
+        try:
+            # Wait for the DTE selector buttons to appear
+            page.wait_for_selector("button:has-text('30')", timeout=15000)
+            page.click("button:has-text('30')")
+            print(f"  [{clean_ticker}] Forced 30D selection via UI.")
+        except:
+            print(f"  [{clean_ticker}] 30D button not found, attempting URL override...")
+            page.goto(f"{url}&dte=30&showHeatmap=true", wait_until="networkidle")
 
-        # --- THE FIX: EXTENDED HYDRATION LOCK ---
-        print(f"[{clean_ticker}] Waiting for deep data hydration (Max 180s)...")
+        # 3. HYDRATION LOCK (Increased check for 30D specific data)
+        print(f"  [{clean_ticker}] Waiting for hydration...")
         page.wait_for_function("""() => {
             const cells = document.querySelectorAll('td');
-            // Check for at least 30 cells and ensure cell 15 has numeric data
-            return cells.length > 30 && /[0-9]/.test(cells[15].innerText);
-        }""", timeout=180000)
+            // Ensure we have a populated table and the first cell is not 'Loading...'
+            return cells.length > 30 && cells[0].innerText.trim() !== "" && /[0-9]/.test(cells[10].innerText);
+        }""", timeout=90000)
 
-        # Final safety for CSS styles to settle
-        time.sleep(5) 
-
+        # 4. Final Extraction
+        time.sleep(3) 
         rows = page.query_selector_all("tr")
         values_table, colors_table = [], []
 
@@ -90,14 +91,13 @@ def scrape_ticker(context, ticker):
             cells = row.query_selector_all("td, th")
             if not cells: continue
             
-            # evaluate(innerText) captures the 'sticky' data perfectly
             v_row = [c.evaluate("el => el.innerText").strip() for c in cells]
-            
             if v_row and any(v_row):
                 values_table.append(v_row)
                 c_row = [rgb_to_hex(c.evaluate("el => window.getComputedStyle(el).backgroundColor")) for c in cells]
                 colors_table.append(c_row)
 
+        # Sync to Sheets
         now_est = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=4)
         payload = {
             "ticker": clean_ticker, 
@@ -109,10 +109,10 @@ def scrape_ticker(context, ticker):
         }
         
         resp = requests.post(SHEETS_BRIDGE_URL, json=payload, timeout=60)
-        print(f"[{clean_ticker}] Sync: {resp.text}")
+        print(f"[{clean_ticker}] Sync Status: {resp.text}")
 
     except Exception as e:
-        print(f"[{clean_ticker}] Data failed to hydrate: {e}")
+        print(f"[{clean_ticker}] Scrape failed: {e}")
     finally:
         page.close()
 
