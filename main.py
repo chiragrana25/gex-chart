@@ -12,7 +12,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from playwright.async_api import async_playwright
 from PIL import Image
 
-# --- CONFIGURATION ---
+# --- CONFIG
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
 TICKERS = ['SPY', 'QQQ', 'NVDA']
 
@@ -37,33 +37,32 @@ async def process_ticker(sel_driver, pw_browser, ticker):
     print(f"Processing {clean_ticker}...")
 
     try:
-        # --- PHASE 1: SELENIUM FOR CHART IMAGE ---
+        # PHASE 1: SELENIUM CHART CAPTURE
         chart_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7"
         sel_driver.get(chart_url)
-        await asyncio.sleep(15) # Wait for animation
+        await asyncio.sleep(15) 
         
         screenshot_path = f"full_{clean_ticker}.png"
         sel_driver.save_screenshot(screenshot_path)
-        
         with Image.open(screenshot_path) as img:
             img.crop((450, 180, 1500, 950)).save(f"{clean_ticker}_final.png")
         
         with open(f"{clean_ticker}_final.png", "rb") as f:
             b64_image = base64.b64encode(f.read()).decode('utf-8')
 
-        # --- PHASE 2: PLAYWRIGHT FOR 30D HEATMAP DATA ---
+        # PHASE 2: PLAYWRIGHT 30D HEATMAP DATA
         page = await pw_browser.new_page()
         data_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true"
-        await page.goto(data_url, wait_until="networkidle")
+        
+        # Increased timeout and switched to domcontentloaded for heavy NVDA/QQQ loads
+        await page.goto(data_url, wait_until="domcontentloaded", timeout=90000)
 
-        # Wait until the table has rows AND those rows contain numeric digits
+        print(f"  Hydrating data for {clean_ticker}...")
         await page.wait_for_function("""() => {
-            const rows = document.querySelectorAll('tr');
-            const cells = document.querySelectorAll('td');
-            return rows.length > 15 && cells.length > 20 && /[0-9]/.test(cells[10].innerText);
-        }""", timeout=60000)
+            const cells = document.querySelectorAll('tr td');
+            return cells.length > 30 && /[0-9]/.test(cells[10].innerText);
+        }""", timeout=120000)
 
-        # Extract values and styles directly via JavaScript evaluation
         table_data = await page.evaluate("""() => {
             const rows = Array.from(document.querySelectorAll('tr'));
             return rows.filter(r => r.querySelector('td')).map(r => {
@@ -79,7 +78,7 @@ async def process_ticker(sel_driver, pw_browser, ticker):
         values_table = [row['values'] for row in table_data]
         colors_table = [[rgb_to_hex(c) for c in row['colors']] for row in table_data]
 
-        # --- PHASE 3: SYNC ---
+        # PHASE 3: DISPATCH
         try:
             price_val = yf.Ticker(ticker).fast_info.get('last_price')
             price = f"{price_val:.2f}" if price_val else "N/A"
@@ -87,11 +86,8 @@ async def process_ticker(sel_driver, pw_browser, ticker):
             price = "N/A"
 
         payload = {
-            "ticker": clean_ticker,
-            "values": values_table,
-            "colors": colors_table,
-            "imageData": b64_image,
-            "price": price,
+            "ticker": clean_ticker, "values": values_table, "colors": colors_table,
+            "imageData": b64_image, "price": price,
             "updated": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
         }
         
@@ -99,13 +95,10 @@ async def process_ticker(sel_driver, pw_browser, ticker):
         print(f"  Success: {clean_ticker} synced.")
 
     except Exception as e:
-        print(f"  Error on {clean_ticker}: {e}")
+        print(f"  Failed {clean_ticker}: {e}")
 
 async def main():
-    if not WEBAPP_URL:
-        print("CRITICAL: WEBAPP_URL secret is missing!")
-        return
-
+    if not WEBAPP_URL: return print("WEBAPP_URL Missing")
     sel_driver = setup_selenium()
     async with async_playwright() as p:
         pw_browser = await p.chromium.launch(headless=True)
