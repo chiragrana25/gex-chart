@@ -51,7 +51,7 @@ def main():
                 screenshot = f"full_{clean_ticker}.png"
                 sel_driver.save_screenshot(screenshot)
                 with Image.open(screenshot) as img:
-                    img.crop((550, 180, 1650, 950)).save(f"{clean_ticker}_final.png")
+                    img.crop((650, 180, 1550, 950)).save(f"{clean_ticker}_final.png")
                 with open(f"{clean_ticker}_final.png", "rb") as f:
                     b64_image = base64.b64encode(f.read()).decode('utf-8')
 
