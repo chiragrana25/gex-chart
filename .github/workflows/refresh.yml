@@ -23,11 +23,15 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      # --- ADD THIS STEP HERE ---
-      - name: Install Playwright Browsers
-        run: npx playwright install --with-deps chromium
-        
+      - name: Install Playwright and System Deps
+        # This installs the browser and all required Linux system libraries
+        run: |
+          python -m playwright install --with-deps chromium
+          python -m playwright install-deps
+
       - name: Run Scraper
         env:
           WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
+          # Force the environment to use the local cache
+          PLAYWRIGHT_BROWSERS_PATH: 0 
         run: python main.py
