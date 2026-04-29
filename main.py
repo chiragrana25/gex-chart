@@ -14,8 +14,8 @@ from PIL import Image
 
 # --- CONFIGURATION ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-#TICKERS = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMD', 'MU', 'MSFT', 'UNH'] 
-TICKERS = ['SPY'] 
+TICKERS = ['SPX', 'SPY', 'QQQ', 'NVDA', 'MU', 'SNDK','TSLA', 'AAPL', 'AMD', 'CRWV', 'NBIS', 'MSFT', 'UNH', 'AAOI', 'ASTS', 'RDDT', 'ALAB', 'PANW', 'UNH'] 
+#TICKERS = ['SPY'] 
 
 def rgb_to_hex(rgb_str):
     if not rgb_str or 'rgba(0, 0, 0, 0)' in rgb_str or 'transparent' in rgb_str:
