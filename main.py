@@ -40,7 +40,7 @@ def main():
             clean_ticker = ticker.replace('^', '')
             print(f"Processing {clean_ticker}...")
             
-            # PHASE 1: Chart Capture (7-Day View)
+            # PHASE 1: Chart Capture
             driver.get(f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7")
             time.sleep(15) 
             full_path = f"full_{clean_ticker}.png"
@@ -55,7 +55,7 @@ def main():
             data_ready = False
             for attempt in range(3):
                 try:
-                    # Polling logic: Wait for > 15 rows and numeric text in cells
+                    # Hydration check: Wait for text in cells
                     WebDriverWait(driver, 45).until(lambda d: d.execute_script(
                         "let r = document.querySelectorAll('tr');"
                         "let c = document.querySelectorAll('tr td');"
@@ -69,10 +69,8 @@ def main():
                     time.sleep(12)
 
             if not data_ready:
-                print(f"  Skipping {clean_ticker}: Table never populated with data.")
+                print(f"  Skipping {clean_ticker}: Table never populated.")
                 continue
 
             values_table, colors_table = [], []
             rows = driver.find_elements(By.TAG_NAME, "tr")
-            for row in rows:
-                cells = row.find_elements(By.CSS_SELECTOR, "td, th
