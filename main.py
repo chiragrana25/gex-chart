@@ -51,27 +51,37 @@ def capture_chart(ticker):
 
 def scrape_ticker(context, ticker):
     clean_ticker = ticker.replace('^', '')
+    # Start with the URL, but we will add a 'kickstart' scroll
     url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true"
     page = context.new_page()
-    print(f"[{clean_ticker}] Scraping Heatmap...")
     
+    # Increase the internal navigation timeout
+    page.set_default_timeout(180000) 
+    
+    print(f"[{clean_ticker}] Scraping Heatmap...")
     price = get_live_price(ticker)
     chart_b64 = capture_chart(ticker)
     
     try:
-        # 1. Wait for network to quiet down
-        page.goto(url, wait_until="networkidle", timeout=90000)
+        # Use 'domcontentloaded' to get in fast, then we handle the wait
+        page.goto(url, wait_until="domcontentloaded")
         
-        # 2. HYDRATION LOCK: Wait specifically for data to appear in cells
-        # This replaces the fixed time.sleep(5) with a logic-based wait
-        print(f"[{clean_ticker}] Waiting for data hydration...")
+        # --- NEW: ANTI-STALL SCROLL ---
+        # Some sites in 2026 use lazy-loading that only triggers on scroll
+        page.mouse.wheel(0, 500)
+        time.sleep(2)
+        page.mouse.wheel(0, -500)
+
+        # --- THE FIX: EXTENDED HYDRATION LOCK ---
+        print(f"[{clean_ticker}] Waiting for deep data hydration (Max 180s)...")
         page.wait_for_function("""() => {
             const cells = document.querySelectorAll('td');
-            return cells.length > 20 && /[0-9]/.test(cells[10].innerText);
-        }""", timeout=60000)
+            // Check for at least 30 cells and ensure cell 15 has numeric data
+            return cells.length > 30 && /[0-9]/.test(cells[15].innerText);
+        }""", timeout=180000)
 
-        # 3. Final small buffer for color rendering
-        time.sleep(2) 
+        # Final safety for CSS styles to settle
+        time.sleep(5) 
 
         rows = page.query_selector_all("tr")
         values_table, colors_table = [], []
@@ -80,7 +90,7 @@ def scrape_ticker(context, ticker):
             cells = row.query_selector_all("td, th")
             if not cells: continue
             
-            # evaluate(innerText) is the key to catching 'sticky' columns like Dates
+            # evaluate(innerText) captures the 'sticky' data perfectly
             v_row = [c.evaluate("el => el.innerText").strip() for c in cells]
             
             if v_row and any(v_row):
@@ -102,7 +112,7 @@ def scrape_ticker(context, ticker):
         print(f"[{clean_ticker}] Sync: {resp.text}")
 
     except Exception as e:
-        print(f"[{clean_ticker}] Error: {e}")
+        print(f"[{clean_ticker}] Data failed to hydrate: {e}")
     finally:
         page.close()
 
