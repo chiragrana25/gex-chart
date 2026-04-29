@@ -1,6 +1,6 @@
-selenium
-webdriver-manager
-playwright
+playwright==1.57.0
 requests
 Pillow
 yfinance
+selenium
+webdriver-manager
