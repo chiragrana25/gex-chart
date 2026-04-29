@@ -9,7 +9,7 @@ from PIL import Image
 
 # --- CONFIG
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ['SPY', 'QQQ', 'NVDA']
+TICKERS = ['NVDA']
 
 def rgb_to_hex(rgb_str):
     try:
@@ -51,27 +51,41 @@ def main():
                 with open(f"{clean_ticker}_final.png", "rb") as f:
                     b64_image = base64.b64encode(f.read()).decode('utf-8')
 
-                # PHASE 2: PLAYWRIGHT FOR 30D HEATMAP
+# PHASE 2: PLAYWRIGHT FOR 30D HEATMAP (Dropdown Logic)
                 page = context.new_page()
                 data_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX"
                 page.goto(data_url, wait_until="domcontentloaded", timeout=90000)
                 
-                # Force 30D DTE Selection
-                page.wait_for_selector("button", timeout=20000)
-                dte_buttons = page.query_selector_all("button")
-                for btn in dte_buttons:
-                    if btn.inner_text().strip() == "30":
-                        btn.click()
-                        print(f"  [{clean_ticker}] Forced 30D Selection.")
-                        break
+                try:
+                    print(f"  [{clean_ticker}] Interacting with DTE Dropdown...")
+                    
+                    # 1. Find and click the DTE dropdown trigger
+                    # We look for a div or button that contains the current DTE text
+                    dropdown_trigger = page.wait_for_selector("[role='combobox'], .MuiSelect-select", timeout=20000)
+                    dropdown_trigger.click()
+                    
+                    # 2. Wait for the popover/menu to appear
+                    page.wait_for_selector("[role='listbox'], .MuiList-root", timeout=10000)
+                    
+                    # 3. Find the '30' option inside the listbox and click it
+                    # Mui uses [role='option'] for the items in the dropdown
+                    target_option = page.wait_for_selector("[role='option']:has-text('30')", timeout=10000)
+                    target_option.click()
+                    
+                    print(f"  [{clean_ticker}] Successfully selected 30D from dropdown.")
+                    
+                except Exception as dte_err:
+                    print(f"  [{clean_ticker}] Dropdown interaction failed: {dte_err}")
+                    # If click fails, try one last URL override attempt
+                    page.goto(f"{data_url}&dte=30&showHeatmap=true", wait_until="networkidle")
 
-                # Hydration Lock
+                # Hydration Lock - Wait for the data table to populate
                 page.wait_for_function("""() => {
                     const cells = document.querySelectorAll('td');
                     return cells.length > 20 && /[0-9]/.test(cells[10].innerText);
                 }""", timeout=60000)
                 
-                time.sleep(5) 
+                time.sleep(5) # Final buffer for CSS/Heatmap colors to render
 
                 rows = page.query_selector_all("tr")
                 values_table, colors_table = [], []
