@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 from PIL import Image
 
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ['SPY', 'QQQ', 'NVDA']
+TICKERS = ['SPY', 'NVDA']
 
 def rgb_to_hex(rgb_str):
     try:
