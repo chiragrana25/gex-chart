@@ -15,8 +15,7 @@ from PIL import Image
 
 # --- CONFIGURATION ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-# Use ^SPX for indices to avoid yfinance delisting errors
-TICKERS = [ 'SPY', 'NVDA']
+TICKERS = ['SPY', 'NVDA']
 
 def rgb_to_hex(rgb_str):
     try:
@@ -29,7 +28,7 @@ def rgb_to_hex(rgb_str):
 def get_live_price(ticker):
     try:
         t = yf.Ticker(ticker)
-        # 2026 yfinance compatibility fix
+        # Handle 2026 yfinance field changes
         price = t.fast_info.get('lastPrice') or t.fast_info.get('last_price')
         return f"{price:.2f}" if price else "N/A"
     except: return "N/A"
@@ -54,43 +53,41 @@ def main():
             clean_ticker = ticker.replace('^', '')
             print(f"Processing {clean_ticker}...")
             
-            # PHASE 1: Capture 7-Day GEX Chart
+            # PHASE 1: CHART CAPTURE
             driver.get(f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7")
-            time.sleep(15) # Essential for chart animations
+            time.sleep(15) 
             full_path = f"full_{clean_ticker}.png"
             driver.save_screenshot(full_path)
-            
-            # Crop to the actual chart area
             img = Image.open(full_path).crop((450, 180, 1500, 950))
             crop_path = f"{clean_ticker}_final.png"
             img.save(crop_path)
-            
             with open(crop_path, "rb") as f:
                 b64_image = base64.b64encode(f.read()).decode('utf-8')
 
-            # PHASE 2: Extract Heatmap Data (30-Day DTE)
+            # PHASE 2: HEATMAP DATA EXTRACTION (Hardened)
             data_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true"
             driver.get(data_url)
             
-            # HARDENED WAIT: Check that the table has rows AND those rows have text
+            # JS POLLING: Wait until table has data and the first cell isn't empty
             data_ready = False
-            for _ in range(3): # 3-step retry
+            for attempt in range(3):
                 try:
-                    WebDriverWait(driver, 30).until(
+                    # Check if at least one cell has text that looks like a number/date
+                    WebDriverWait(driver, 35).until(
                         lambda d: d.execute_script(
                             "let cells = document.querySelectorAll('tr td');"
-                            "return cells.length > 10 && cells[5].innerText.trim().length > 0;"
+                            "return cells.length > 5 && cells[0].innerText.trim().length > 0;"
                         )
                     )
                     data_ready = True
                     break
                 except:
-                    print(f"  Retry loading data for {clean_ticker}...")
+                    print(f"  Attempt {attempt + 1} failed for {clean_ticker}, refreshing...")
                     driver.refresh()
                     time.sleep(10)
 
             if not data_ready:
-                print(f"  Skipping {clean_ticker}: Table never populated.")
+                print(f"  Skipping {clean_ticker}: Table never hydrated.")
                 continue
 
             values_table, colors_table = [], []
@@ -99,7 +96,7 @@ def main():
                 cells = row.find_elements(By.CSS_SELECTOR, "td, th")
                 if not cells: continue
                 
-                # Fetch text/colors directly from DOM memory (handles sticky columns)
+                # Fetch text/colors via JS to handle "sticky" or virtualized table headers
                 v_row = [driver.execute_script("return arguments[0].innerText;", c).strip() for c in cells]
                 c_row = [rgb_to_hex(driver.execute_script("return window.getComputedStyle(arguments[0]).backgroundColor;", c)) for c in cells]
                 
@@ -107,7 +104,7 @@ def main():
                     values_table.append(v_row)
                     colors_table.append(c_row)
 
-            # PHASE 3: Sync to Google Sheets
+            # PHASE 3: DISPATCH
             payload = {
                 "ticker": clean_ticker,
                 "values": values_table,
