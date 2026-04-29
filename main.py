@@ -50,4 +50,29 @@ def main():
                 b64_image = base64.b64encode(f.read()).decode('utf-8')
 
             # PHASE 2: Heatmap Extraction (FORCED 30-Day DTE)
-            driver
+            driver.get(f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true")
+            
+            data_ready = False
+            for attempt in range(3):
+                try:
+                    # Polling logic: Wait for > 15 rows and numeric text in cells
+                    WebDriverWait(driver, 45).until(lambda d: d.execute_script(
+                        "let r = document.querySelectorAll('tr');"
+                        "let c = document.querySelectorAll('tr td');"
+                        "return r.length > 15 && c.length > 10 && c[5].innerText.trim().match(/[0-9]/);"
+                    ))
+                    data_ready = True
+                    break
+                except:
+                    print(f"  Attempt {attempt+1}: {clean_ticker} still blank, refreshing...")
+                    driver.refresh()
+                    time.sleep(12)
+
+            if not data_ready:
+                print(f"  Skipping {clean_ticker}: Table never populated with data.")
+                continue
+
+            values_table, colors_table = [], []
+            rows = driver.find_elements(By.TAG_NAME, "tr")
+            for row in rows:
+                cells = row.find_elements(By.CSS_SELECTOR, "td, th
