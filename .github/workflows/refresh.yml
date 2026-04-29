@@ -22,7 +22,10 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install selenium requests webdriver-manager Pillow yfinance playwright
-
+# ADD THIS STEP HERE
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps chromium
+        
       - name: Run Scraper
         env:
           WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
