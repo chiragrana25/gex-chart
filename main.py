@@ -51,20 +51,33 @@ def main():
                 with open(f"{clean_ticker}_final.png", "rb") as f:
                     b64_image = base64.b64encode(f.read()).decode('utf-8')
 
-                # PHASE 2: PLAYWRIGHT FOR 30D DATA (Your Preferred Logic)
+# PHASE 2: PLAYWRIGHT FOR 30D DATA
                 page = context.new_page()
                 data_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true"
                 
-                # Navigate and wait for DOM
-                page.goto(data_url, wait_until="domcontentloaded", timeout=90000)
-                
-                # Deep Hydration Check: Ensures numbers are in cells before scraping
-                page.wait_for_function("""() => {
-                    const cells = document.querySelectorAll('td');
-                    return cells.length > 20 && /[0-9]/.test(cells[10].innerText);
-                }""", timeout=60000)
-                
-                time.sleep(5) # Final safety buffer
+                data_ready = False
+                for attempt in range(2): # Retry once if it fails
+                    try:
+                        print(f"  [{clean_ticker}] Hydrating (Attempt {attempt+1})...")
+                        page.goto(data_url, wait_until="domcontentloaded", timeout=90000)
+                        
+                        # Deep Hydration Check: Wait up to 120s for QQQ/NVDA
+                        page.wait_for_function("""() => {
+                            const cells = document.querySelectorAll('td');
+                            return cells.length > 20 && /[0-9]/.test(cells[10].innerText);
+                        }""", timeout=120000)
+                        
+                        data_ready = True
+                        break 
+                    except Exception as e:
+                        print(f"  [{clean_ticker}] Timeout on attempt {attempt+1}, refreshing...")
+                        page.reload()
+
+                if not data_ready:
+                    page.close()
+                    raise Exception("Table failed to hydrate after 2 attempts.")
+
+                time.sleep(5) # Final safety for color rendering
 
                 rows = page.query_selector_all("tr")
                 values_table, colors_table = [], []
