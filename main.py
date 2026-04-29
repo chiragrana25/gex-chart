@@ -90,14 +90,15 @@ def main():
 
                 # PHASE 3: DISPATCH
                 price_val = yf.Ticker(ticker).fast_info.get('last_price', 'N/A')
+# Change the label from "updated" to "GEX SYNC"
                 payload = {
                     "ticker": clean_ticker, 
                     "values": values_table, 
                     "colors": colors_table,
                     "imageData": b64_image, 
                     "price": f"{price_val:.2f}" if price_val != 'N/A' else 'N/A',
-                    "updated": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
-                }
+                    "gex_sync": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
+        }
                 requests.post(WEBAPP_URL, json=payload, timeout=60)
                 print(f"  Success: {clean_ticker} synced.")
 
