@@ -40,7 +40,7 @@ async def process_ticker(sel_driver, pw_browser, ticker):
         # --- PHASE 1: SELENIUM FOR CHART IMAGE ---
         chart_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7"
         sel_driver.get(chart_url)
-        await asyncio.sleep(15) # Wait for chart animations
+        await asyncio.sleep(15) # Wait for animation
         
         screenshot_path = f"full_{clean_ticker}.png"
         sel_driver.save_screenshot(screenshot_path)
@@ -56,12 +56,14 @@ async def process_ticker(sel_driver, pw_browser, ticker):
         data_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true"
         await page.goto(data_url, wait_until="networkidle")
 
-        # Playwright Deep-Wait: ensures text content is actually injected
+        # Wait until the table has rows AND those rows contain numeric digits
         await page.wait_for_function("""() => {
-            const cells = document.querySelectorAll('tr td');
-            return cells.length > 20 && /[0-9]/.test(cells[5].innerText);
+            const rows = document.querySelectorAll('tr');
+            const cells = document.querySelectorAll('td');
+            return rows.length > 15 && cells.length > 20 && /[0-9]/.test(cells[10].innerText);
         }""", timeout=60000)
 
+        # Extract values and styles directly via JavaScript evaluation
         table_data = await page.evaluate("""() => {
             const rows = Array.from(document.querySelectorAll('tr'));
             return rows.filter(r => r.querySelector('td')).map(r => {
@@ -77,14 +79,19 @@ async def process_ticker(sel_driver, pw_browser, ticker):
         values_table = [row['values'] for row in table_data]
         colors_table = [[rgb_to_hex(c) for c in row['colors']] for row in table_data]
 
-        # --- PHASE 3: DISPATCH ---
-        price = yf.Ticker(ticker).fast_info.get('last_price', 'N/A')
+        # --- PHASE 3: SYNC ---
+        try:
+            price_val = yf.Ticker(ticker).fast_info.get('last_price')
+            price = f"{price_val:.2f}" if price_val else "N/A"
+        except:
+            price = "N/A"
+
         payload = {
             "ticker": clean_ticker,
             "values": values_table,
             "colors": colors_table,
             "imageData": b64_image,
-            "price": f"{price:.2f}" if price != 'N/A' else 'N/A',
+            "price": price,
             "updated": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
         }
         
@@ -96,16 +103,14 @@ async def process_ticker(sel_driver, pw_browser, ticker):
 
 async def main():
     if not WEBAPP_URL:
-        print("CRITICAL: WEBAPP_URL missing.")
+        print("CRITICAL: WEBAPP_URL secret is missing!")
         return
 
     sel_driver = setup_selenium()
     async with async_playwright() as p:
         pw_browser = await p.chromium.launch(headless=True)
-        
         for ticker in TICKERS:
             await process_ticker(sel_driver, pw_browser, ticker)
-            
         await pw_browser.close()
     sel_driver.quit()
 
