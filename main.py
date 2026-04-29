@@ -49,13 +49,13 @@ def main():
             with open(f"{clean_ticker}_final.png", "rb") as f:
                 b64_image = base64.b64encode(f.read()).decode('utf-8')
 
-            # PHASE 2: Heatmap Extraction (FORCED 30-Day DTE)
+            # PHASE 2: Heatmap Extraction (Forced 30D DTE)
             driver.get(f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true")
             
             data_ready = False
             for attempt in range(3):
                 try:
-                    # Hydration check: Wait for text in cells
+                    # Logic: Wait for > 15 rows and numeric text in cell 5
                     WebDriverWait(driver, 45).until(lambda d: d.execute_script(
                         "let r = document.querySelectorAll('tr');"
                         "let c = document.querySelectorAll('tr td');"
@@ -64,13 +64,45 @@ def main():
                     data_ready = True
                     break
                 except:
-                    print(f"  Attempt {attempt+1}: {clean_ticker} still blank, refreshing...")
+                    print(f"  Attempt {attempt+1}: {clean_ticker} blank, refreshing...")
                     driver.refresh()
                     time.sleep(12)
 
             if not data_ready:
-                print(f"  Skipping {clean_ticker}: Table never populated.")
+                print(f"  Skipping {clean_ticker}: Table failed to hydrate.")
                 continue
 
+            # PHASE 3: Extraction
             values_table, colors_table = [], []
             rows = driver.find_elements(By.TAG_NAME, "tr")
+            for row in rows:
+                cells = row.find_elements(By.CSS_SELECTOR, "td, th")
+                if not cells: continue
+                
+                v_row = [driver.execute_script("return arguments[0].innerText;", c).strip() for c in cells]
+                c_row = [rgb_to_hex(driver.execute_script("return window.getComputedStyle(arguments[0]).backgroundColor;", c)) for c in cells]
+                
+                if v_row and any(v_row):
+                    values_table.append(v_row)
+                    colors_table.append(c_row)
+
+            # PHASE 4: Sync
+            try:
+                price = yf.Ticker(ticker).fast_info.get('last_price', 'N/A')
+                payload = {
+                    "ticker": clean_ticker, "values": values_table, "colors": colors_table,
+                    "imageData": b64_image, "price": f"{price:.2f}" if price != 'N/A' else 'N/A',
+                    "updated": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
+                }
+                requests.post(WEBAPP_URL, json=payload, timeout=60)
+                print(f"  Success: {clean_ticker} synced.")
+            except Exception as e:
+                print(f"  Sync Error for {clean_ticker}: {e}")
+                
+    except Exception as e:
+        print(f"FATAL ERROR: {e}")
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+    main()
