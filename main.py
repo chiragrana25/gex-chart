@@ -1,9 +1,4 @@
-import os
-import time
-import requests
-import base64
-import datetime
-import re
+import os, time, requests, base64, datetime, re
 import yfinance as yf
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -13,9 +8,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from PIL import Image
 
-# --- CONFIGURATION ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ['SPY', 'NVDA']
+TICKERS = ['SPY', 'QQQ', 'NVDA']
 
 def rgb_to_hex(rgb_str):
     try:
@@ -24,14 +18,6 @@ def rgb_to_hex(rgb_str):
             return '#{:02x}{:02x}{:02x}'.format(int(nums[0]), int(nums[1]), int(nums[2]))
         return "#FFFFFF"
     except: return "#FFFFFF"
-
-def get_live_price(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        # Handle 2026 yfinance field changes
-        price = t.fast_info.get('lastPrice') or t.fast_info.get('last_price')
-        return f"{price:.2f}" if price else "N/A"
-    except: return "N/A"
 
 def setup_driver():
     options = Options()
@@ -43,51 +29,41 @@ def setup_driver():
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def main():
-    if not WEBAPP_URL:
-        print("CRITICAL: WEBAPP_URL secret is missing!")
-        return
-
     driver = setup_driver()
     try:
         for ticker in TICKERS:
             clean_ticker = ticker.replace('^', '')
             print(f"Processing {clean_ticker}...")
             
-            # PHASE 1: CHART CAPTURE
+            # PHASE 1: Chart Capture
             driver.get(f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7")
             time.sleep(15) 
             full_path = f"full_{clean_ticker}.png"
             driver.save_screenshot(full_path)
-            img = Image.open(full_path).crop((450, 180, 1500, 950))
-            crop_path = f"{clean_ticker}_final.png"
-            img.save(crop_path)
-            with open(crop_path, "rb") as f:
+            Image.open(full_path).crop((450, 180, 1500, 950)).save(f"{clean_ticker}_final.png")
+            with open(f"{clean_ticker}_final.png", "rb") as f:
                 b64_image = base64.b64encode(f.read()).decode('utf-8')
 
-            # PHASE 2: HEATMAP DATA EXTRACTION (Hardened)
-            data_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true"
-            driver.get(data_url)
+            # PHASE 2: Heatmap (The NVDA Fix)
+            driver.get(f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true")
             
-            # JS POLLING: Wait until table has data and the first cell isn't empty
             data_ready = False
             for attempt in range(3):
                 try:
-                    # Check if at least one cell has text that looks like a number/date
-                    WebDriverWait(driver, 35).until(
-                        lambda d: d.execute_script(
-                            "let cells = document.querySelectorAll('tr td');"
-                            "return cells.length > 5 && cells[0].innerText.trim().length > 0;"
-                        )
-                    )
+                    # WAIT logic: Wait for > 10 rows and for the 5th row to have data
+                    WebDriverWait(driver, 50).until(lambda d: d.execute_script(
+                        "let r = document.querySelectorAll('tr');"
+                        "return r.length > 15 && r[5].innerText.trim().length > 0;"
+                    ))
                     data_ready = True
                     break
                 except:
-                    print(f"  Attempt {attempt + 1} failed for {clean_ticker}, refreshing...")
+                    print(f"  Attempt {attempt+1} stalled for {clean_ticker}, refreshing...")
                     driver.refresh()
-                    time.sleep(10)
+                    time.sleep(12) # Longer sleep after refresh
 
             if not data_ready:
-                print(f"  Skipping {clean_ticker}: Table never hydrated.")
+                print(f"  CRITICAL: {clean_ticker} failed to hydrate. Skipping.")
                 continue
 
             values_table, colors_table = [], []
@@ -95,26 +71,24 @@ def main():
             for row in rows:
                 cells = row.find_elements(By.CSS_SELECTOR, "td, th")
                 if not cells: continue
-                
-                # Fetch text/colors via JS to handle "sticky" or virtualized table headers
                 v_row = [driver.execute_script("return arguments[0].innerText;", c).strip() for c in cells]
                 c_row = [rgb_to_hex(driver.execute_script("return window.getComputedStyle(arguments[0]).backgroundColor;", c)) for c in cells]
-                
                 if v_row and any(v_row):
                     values_table.append(v_row)
                     colors_table.append(c_row)
 
-            # PHASE 3: DISPATCH
-            payload = {
-                "ticker": clean_ticker,
-                "values": values_table,
-                "colors": colors_table,
-                "imageData": b64_image,
-                "price": get_live_price(ticker),
-                "updated": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
-            }
-            requests.post(WEBAPP_URL, json=payload, timeout=60)
-            print(f"  Success: {clean_ticker} synced.")
+            # PHASE 3: Dispatch
+            try:
+                price = yf.Ticker(ticker).fast_info.get('last_price', 'N/A')
+                payload = {
+                    "ticker": clean_ticker, "values": values_table, "colors": colors_table,
+                    "imageData": b64_image, "price": f"{price:.2f}" if price != 'N/A' else 'N/A',
+                    "updated": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
+                }
+                requests.post(WEBAPP_URL, json=payload, timeout=60)
+                print(f"  Success: {clean_ticker} synced.")
+            except Exception as e:
+                print(f"  Error syncing {clean_ticker}: {e}")
                 
     finally:
         driver.quit()
