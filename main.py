@@ -15,8 +15,7 @@ from PIL import Image
 
 # --- CONFIGURATION ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-# Use ^SPX for indices to avoid delisting errors
-TICKERS = [ 'NVDA']
+TICKERS = ['NVDA']
 
 def rgb_to_hex(rgb_str):
     try:
@@ -29,7 +28,7 @@ def rgb_to_hex(rgb_str):
 def get_live_price(ticker):
     try:
         t = yf.Ticker(ticker)
-        # 2026 Fix: Fallback for fast_info attribute changes
+        # Handle index vs equity naming differences in yfinance
         price = t.fast_info.get('lastPrice') or t.fast_info.get('last_price')
         return f"{price:.2f}" if price else "N/A"
     except: return "N/A"
@@ -40,7 +39,7 @@ def setup_driver():
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920,1080')
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+    options.add_argument(\"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def main():
@@ -58,45 +57,58 @@ def main():
             img = Image.open(full_path).crop((450, 180, 1500, 950))
             crop_path = f"{clean_ticker}_final.png"
             img.save(crop_path)
-            with open(crop_path, "rb") as f:
+            with open(crop_path, \"rb\") as f:
                 b64_image = base64.b64encode(f.read()).decode('utf-8')
 
-            # PHASE 2: Heatmap Data (30-Day)
-            driver.get(f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true")
+            # PHASE 2: Data Extraction with Refresh Retry
+            data_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&dte=30&showHeatmap=true"
+            data_loaded = False
             
-            # Polling Wait: Ensures data exists in the DOM before reading
-            try:
-                WebDriverWait(driver, 45).until(
-                    lambda d: d.execute_script("return document.querySelector('tr td') && document.querySelector('tr td').innerText.trim().length > 0")
-                )
-            except:
-                print(f"Skipping {clean_ticker}: Table failed to load data.")
+            for attempt in range(2): # Try twice
+                driver.get(data_url)
+                try:
+                    # Specific check: Wait for the first cell to contain a number (Strike)
+                    WebDriverWait(driver, 40).until(
+                        lambda d: d.execute_script(\"return document.querySelector('tr td') && document.querySelector('tr td').innerText.trim().length > 0\")
+                    )
+                    data_loaded = True
+                    break
+                except:
+                    if attempt == 0:
+                        print(f"  Load failed for {clean_ticker}, refreshing...")
+                        driver.refresh()
+                        time.sleep(5)
+            
+            if not data_loaded:
+                print(f"  Skipping {clean_ticker}: Table failed to load data after retry.")
                 continue
 
             values_table, colors_table = [], []
-            rows = driver.find_elements(By.TAG_NAME, "tr")
+            rows = driver.find_elements(By.TAG_NAME, \"tr\")
             for row in rows:
-                cells = row.find_elements(By.CSS_SELECTOR, "td, th")
+                cells = row.find_elements(By.CSS_SELECTOR, \"td, th\")
                 if not cells: continue
-                v_row = [driver.execute_script("return arguments[0].innerText;", c).strip() for c in cells]
-                c_row = [rgb_to_hex(driver.execute_script("return window.getComputedStyle(arguments[0]).backgroundColor;", c)) for c in cells]
+                # The 'innerText' script is the key to catching 'sticky' columns like Dates/Strikes
+                v_row = [driver.execute_script(\"return arguments[0].innerText;\", c).strip() for c in cells]
+                c_row = [rgb_to_hex(driver.execute_script(\"return window.getComputedStyle(arguments[0]).backgroundColor;\", c)) for c in cells]
                 if v_row and any(v_row):
                     values_table.append(v_row)
                     colors_table.append(c_row)
 
-            # PHASE 3: Dispatch
+            # PHASE 3: Sync
             payload = {
-                "ticker": clean_ticker,
-                "values": values_table,
-                "colors": colors_table,
-                "imageData": b64_image,
-                "price": get_live_price(ticker),
-                "updated": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
+                \"ticker\": clean_ticker,
+                \"values\": values_table,
+                \"colors\": colors_table,
+                \"imageData\": b64_image,
+                \"price\": get_live_price(ticker),
+                \"updated\": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime(\"%I:%M %p\")
             }
             requests.post(WEBAPP_URL, json=payload, timeout=60)
+            print(f"  Success: {clean_ticker} synced.")
                 
     finally:
         driver.quit()
 
-if __name__ == "__main__":
+if __name__ == \"__main__\":
     main()
