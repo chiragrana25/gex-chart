@@ -2,7 +2,9 @@ name: GEX Combined Scraper
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # Every 30 minutes
+    #- cron: '*/15 12-23,0 * * 1-5'
+    - cron: '*/15 8-20 * * 1-5'
+      timezone: "America/New_York"
   workflow_dispatch:
 
 jobs:
