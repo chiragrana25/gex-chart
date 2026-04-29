@@ -27,7 +27,20 @@ def rgb_to_hex(rgb_str):
             return '#{:02x}{:02x}{:02x}'.format(int(nums[0]), int(nums[1]), int(nums[2]))
         return "#FFFFFF"
     except: return "#FFFFFF"
-
+        
+def get_live_price(ticker):
+    """Safe price fetching to prevent script crashes"""
+    try:
+        t = yf.Ticker(ticker)
+        # Using .info or .fast_info with a fallback
+        price = t.fast_info.get('last_price')
+        if price:
+            return f"{price:.2f}"
+        return "N/A"
+    except Exception as e:
+        print(f"Price fetch failed for {ticker}: {e}")
+        return "N/A"
+        
 def setup_driver():
     options = Options()
     options.add_argument('--headless=new')
@@ -78,7 +91,7 @@ def main():
                 "values": values_table,
                 "colors": colors_table, # Now sending HEX colors
                 "imageData": b64_image,
-                "price": yf.Ticker(ticker).fast_info['last_price'] if ticker != "^SPX" else "N/A",
+                "price": get_live_price(ticker),
                 "updated": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
             }
             requests.post(WEBAPP_URL, json=payload, timeout=60)
