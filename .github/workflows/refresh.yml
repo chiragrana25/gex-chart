@@ -27,5 +27,4 @@ jobs:
       - name: Run Scraper
         env:
           WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
-\
         run: python main.py
