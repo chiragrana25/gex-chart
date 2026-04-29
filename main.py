@@ -7,7 +7,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from playwright.sync_api import sync_playwright
 from PIL import Image
 
-# --- CONFIG
+# --- CONFIG ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
 TICKERS = ['NVDA']
 
@@ -33,14 +33,18 @@ def main():
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(viewport={'width': 1920, 'height': 1080})
+        # Using a desktop User Agent helps prevent the site from defaulting to mobile layouts
+        context = browser.new_context(
+            viewport={'width': 1920, 'height': 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
 
         for ticker in TICKERS:
             clean_ticker = ticker.replace('^', '')
-            print(f"[{clean_ticker}] Processing...")
+            print(f"[{clean_ticker}] Starting Sync...")
 
             try:
-                # PHASE 1: SELENIUM FOR CHART
+                # PHASE 1: SELENIUM FOR CHART IMAGE
                 chart_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7"
                 sel_driver.get(chart_url)
                 time.sleep(15) 
@@ -51,63 +55,52 @@ def main():
                 with open(f"{clean_ticker}_final.png", "rb") as f:
                     b64_image = base64.b64encode(f.read()).decode('utf-8')
 
-# PHASE 2: PLAYWRIGHT FOR 30D HEATMAP (Dropdown Logic)
+                # PHASE 2: PLAYWRIGHT FOR DATA (URL DRIVEN)
                 page = context.new_page()
-                data_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX"
+                # Switched back to URL parameters. Using both expiry and dte to force the view.
+                data_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=30&dte=30&showHeatmap=true"
+                
                 page.goto(data_url, wait_until="domcontentloaded", timeout=90000)
                 
-                try:
-                    print(f"  [{clean_ticker}] Interacting with DTE Dropdown...")
-                    
-                    # 1. Find and click the DTE dropdown trigger
-                    # We look for a div or button that contains the current DTE text
-                    dropdown_trigger = page.wait_for_selector("[role='combobox'], .MuiSelect-select", timeout=20000)
-                    dropdown_trigger.click()
-                    
-                    # 2. Wait for the popover/menu to appear
-                    page.wait_for_selector("[role='listbox'], .MuiList-root", timeout=10000)
-                    
-                    # 3. Find the '30' option inside the listbox and click it
-                    # Mui uses [role='option'] for the items in the dropdown
-                    target_option = page.wait_for_selector("[role='option']:has-text('30')", timeout=10000)
-                    target_option.click()
-                    
-                    print(f"  [{clean_ticker}] Successfully selected 30D from dropdown.")
-                    
-                except Exception as dte_err:
-                    print(f"  [{clean_ticker}] Dropdown interaction failed: {dte_err}")
-                    # If click fails, try one last URL override attempt
-                    page.goto(f"{data_url}&dte=30&showHeatmap=true", wait_until="networkidle")
-
-                # Hydration Lock - Wait for the data table to populate
+                # HYDRATION LOCK: This is the most important line. 
+                # It waits until there are >20 cells AND cell 10 contains a number.
+                print(f"  [{clean_ticker}] Waiting for table hydration...")
                 page.wait_for_function("""() => {
                     const cells = document.querySelectorAll('td');
                     return cells.length > 20 && /[0-9]/.test(cells[10].innerText);
                 }""", timeout=60000)
                 
-                time.sleep(5) # Final buffer for CSS/Heatmap colors to render
+                # Small buffer to ensure the site finishes rendering background colors
+                time.sleep(3) 
 
                 rows = page.query_selector_all("tr")
                 values_table, colors_table = [], []
                 for row in rows:
                     cells = row.query_selector_all("td, th")
                     if not cells: continue
+                    
+                    # Capture text and colors
                     v_row = [c.evaluate("el => el.innerText").strip() for c in cells]
                     if v_row and any(v_row):
                         values_table.append(v_row)
                         c_row = [rgb_to_hex(c.evaluate("el => window.getComputedStyle(el).backgroundColor")) for c in cells]
                         colors_table.append(c_row)
+                
                 page.close()
 
-                # PHASE 3: SYNC
+                # PHASE 3: DISPATCH
                 price_val = yf.Ticker(ticker).fast_info.get('last_price', 'N/A')
                 payload = {
-                    "ticker": clean_ticker, "values": values_table, "colors": colors_table,
-                    "imageData": b64_image, "price": f"{price_val:.2f}" if price_val != 'N/A' else 'N/A',
+                    "ticker": clean_ticker, 
+                    "values": values_table, 
+                    "colors": colors_table,
+                    "imageData": b64_image, 
+                    "price": f"{price_val:.2f}" if price_val != 'N/A' else 'N/A',
                     "updated": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
                 }
                 requests.post(WEBAPP_URL, json=payload, timeout=60)
                 print(f"  Success: {clean_ticker} synced.")
+
             except Exception as e:
                 print(f"  Failed {clean_ticker}: {e}")
 
