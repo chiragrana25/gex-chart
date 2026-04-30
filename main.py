@@ -8,32 +8,64 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from PIL import Image
 
+# Config from GitHub Secrets
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
-TICKERS = ['^SPX', 'SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMD', 'MU', 'MSFT', 'UNH', 
-           'SNDK', 'CRWV', 'NBIS', 'AAOI', 'ASTS', 'RDDT', 'ALAB', 'PANW']
+TICKERS = ['NVDA']
 
 def capture_vision(ticker):
     clean_ticker = ticker.replace('^', '')
+    print(f"[{clean_ticker}] Starting Vision Capture...")
+    
     options = Options()
     options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920,1080')
+    
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     try:
-        driver.get(f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7")
-        WebDriverWait(driver, 30).until(EC.visibility_of_element_located((By.CLASS_NAME, "highcharts-container")))
-        time.sleep(5) # Settle animations
+        # We target the 7-day expiry for a cleaner 'wall' visual
+        url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7"
+        driver.get(url)
         
-        path = f"{clean_ticker}.png"
-        driver.save_screenshot(path)
-        with Image.open(path) as img:
-            img.crop((450, 180, 1850, 950)).save(f"final_{clean_ticker}.png")
+        # Wait for the actual chart container to render
+        WebDriverWait(driver, 30).until(
+            EC.visibility_of_element_located((By.CLASS_NAME, "highcharts-container"))
+        )
         
-        with open(f"final_{clean_ticker}.png", "rb") as f:
-            b64 = base64.b64encode(f.read()).decode('utf-8')
+        # Small buffer for the bar animations to slide into place
+        time.sleep(6) 
         
-        requests.post(WEBAPP_URL, json={"type": "VISION_SYNC", "ticker": clean_ticker, "imageData": b64}, timeout=60)
-        print(f"[{clean_ticker}] Vision Synced.")
-    except Exception as e: print(f"[{clean_ticker}] Vision Error: {e}")
-    finally: driver.quit()
+        raw_path = f"raw_{clean_ticker}.png"
+        crop_path = f"crop_{clean_ticker}.png"
+        driver.save_screenshot(raw_path)
+        
+        # CROP SETTINGS: (left, top, right, bottom)
+        # 1850 on the right ensures we see the strike labels
+        with Image.open(raw_path) as img:
+            img.crop((450, 180, 1850, 950)).save(crop_path)
+            
+        with open(crop_path, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode('utf-8')
+            
+        payload = {
+            "ticker": clean_ticker,
+            "imageData": img_b64
+        }
+        
+        # Send to the Vision-specific Apps Script URL
+        response = requests.post(WEBAPP_URL, json=payload, timeout=60)
+        print(f"  Result: {response.text}")
+        
+    except Exception as e:
+        print(f"  Failed {clean_ticker}: {str(e)}")
+    finally:
+        driver.quit()
 
-for t in TICKERS: capture_vision(t)
+if __name__ == "__main__":
+    if not WEBAPP_URL:
+        print("CRITICAL: WEBAPP_URL secret is missing!")
+    else:
+        for ticker in TICKERS:
+            capture_vision(ticker)
+            time.sleep(2) # Prevent browser-thread congestion
