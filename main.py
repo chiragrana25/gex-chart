@@ -26,7 +26,7 @@ def main():
     try:
         for ticker in TICKERS:
             print(f"Processing {ticker}...")
-            driver.get(f"https://mztrading.netlify.app/options/analyze/{ticker}?expiry=7")
+            driver.get(f"https://mztrading.netlify.app/options/analyze/{ticker}?expiry=7&dgextab=GEX")
             
             # Wait for data to load and animations to settle
             time.sleep(15) 
