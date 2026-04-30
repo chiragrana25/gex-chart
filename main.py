@@ -1,5 +1,4 @@
-import os, asyncio, base64, datetime, re, requests, time
-import yfinance as yf
+import os, base64, time, requests
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -7,138 +6,34 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
-from playwright.sync_api import sync_playwright
 from PIL import Image
 
-# --- CONFIG ---
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
 TICKERS = ['^SPX', 'SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMD', 'MU', 'MSFT', 'UNH', 
            'SNDK', 'CRWV', 'NBIS', 'AAOI', 'ASTS', 'RDDT', 'ALAB', 'PANW']
 
-def rgb_to_hex(rgb_str):
-    try:
-        nums = re.findall(r'\d+', rgb_str)
-        if len(nums) >= 3:
-            return '#{:02x}{:02x}{:02x}'.format(int(nums[0]), int(nums[1]), int(nums[2]))
-        return "#FFFFFF"
-    except: return "#FFFFFF"
-
-def get_live_price(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        price = t.fast_info.get('last_price') or t.fast_info.get('lastPrice')
-        return f"{price:.2f}" if price else "N/A"
-    except: return "N/A"
-
-def capture_chart(ticker):
-    """Phase 1: Selenium for Chart Image"""
+def capture_vision(ticker):
     clean_ticker = ticker.replace('^', '')
     options = Options()
     options.add_argument('--headless=new')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920,1080')
-    
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     try:
-        url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7"
-        driver.get(url)
-        # Wait for Highcharts to render
-        try:
-            WebDriverWait(driver, 25).until(EC.visibility_of_element_located((By.CLASS_NAME, "highcharts-container")))
-        except:
-            time.sleep(10)
+        driver.get(f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7")
+        WebDriverWait(driver, 30).until(EC.visibility_of_element_located((By.CLASS_NAME, "highcharts-container")))
+        time.sleep(5) # Settle animations
         
-        path = f"full_{clean_ticker}.png"
+        path = f"{clean_ticker}.png"
         driver.save_screenshot(path)
-        # Expanded crop to 1850 for the right side
         with Image.open(path) as img:
-            img.crop((450, 180, 1850, 950)).save(f"{clean_ticker}_final.png")
-        with open(f"{clean_ticker}_final.png", "rb") as f:
-            return base64.b64encode(f.read()).decode('utf-8')
-    finally:
-        driver.quit()
+            img.crop((450, 180, 1850, 950)).save(f"final_{clean_ticker}.png")
+        
+        with open(f"final_{clean_ticker}.png", "rb") as f:
+            b64 = base64.b64encode(f.read()).decode('utf-8')
+        
+        requests.post(WEBAPP_URL, json={"type": "VISION_SYNC", "ticker": clean_ticker, "imageData": b64}, timeout=60)
+        print(f"[{clean_ticker}] Vision Synced.")
+    except Exception as e: print(f"[{clean_ticker}] Vision Error: {e}")
+    finally: driver.quit()
 
-def scrape_ticker(context, ticker):
-    clean_ticker = ticker.replace('^', '')
-    data_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=30&dte=30&showHeatmap=true"
-    
-    page = context.new_page()
-    # Force a real desktop-sized viewport to avoid mobile rendering stubs
-    page.set_viewport_size({"width": 1920, "height": 1080})
-    
-    print(f"[{clean_ticker}] Starting Sync...")
-    
-    chart_b64 = capture_chart(ticker)
-    price = get_live_price(ticker)
-
-    try:
-        # 1. Navigate and wait for network idle
-        page.goto(data_url, wait_until="networkidle", timeout=90000)
-        
-        # 2. ANTI-STALL: Scroll down then up to trigger React/Vue hydration
-        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        time.sleep(2)
-        page.evaluate("window.scrollTo(0, 0)")
-        
-        print(f"  [{clean_ticker}] Waiting for table data...")
-        
-        # 3. HYDRATION LOCK: Checking for more than just 10 cells to be safe
-        page.wait_for_function("""() => {
-            const tableRows = document.querySelectorAll('tr');
-            const tableCells = document.querySelectorAll('td');
-            // Ensure table has content and isn't just showing 'Loading...'
-            return tableRows.length > 5 && tableCells.length > 20 && /[0-9]/.test(tableCells[15].innerText);
-        }""", timeout=120000)
-        
-        # Final safety sleep
-        time.sleep(5) 
-        
-        rows = page.query_selector_all("tr")
-        values_table, colors_table = [], []
-        
-        for row in rows:
-            cells = row.query_selector_all("td, th")
-            if not cells: continue
-            
-            # Using innerText to ensure we get the data from the virtualized list
-            v_row = [c.evaluate("el => el.innerText").strip() for c in cells]
-            
-            if v_row and any(v_row):
-                values_table.append(v_row)
-                # Capture the precise computed background color
-                c_row = [rgb_to_hex(c.evaluate("el => window.getComputedStyle(el).backgroundColor")) for c in cells]
-                colors_table.append(c_row)
-        
-        payload = {
-            "ticker": clean_ticker, 
-            "values": values_table, 
-            "colors": colors_table,
-            "imageData": chart_b64, 
-            "price": price,
-            "gex_sync": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
-        }
-        
-        resp = requests.post(WEBAPP_URL, json=payload, timeout=60)
-        print(f"  Success: {clean_ticker} synced.")
-        
-    except Exception as e:
-        print(f"  Failed {clean_ticker}: {e}")
-    finally:
-        page.close()
-               
-def main():
-    if not WEBAPP_URL: return print("WEBAPP_URL missing")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36"
-        )
-        for ticker in TICKERS:
-            scrape_ticker(context, ticker)
-            time.sleep(2) # Memory clearing buffer
-        browser.close()
-
-if __name__ == "__main__":
-    main()
+for t in TICKERS: capture_vision(t)
