@@ -60,54 +60,73 @@ def capture_chart(ticker):
         driver.quit()
 
 def scrape_ticker(context, ticker):
-    """Phase 2: Playwright for Heatmap Data"""
     clean_ticker = ticker.replace('^', '')
     data_url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=30&dte=30&showHeatmap=true"
     
-    # Isolation: Fresh page for every ticker to prevent RDDT/TSLA memory leaks
     page = context.new_page()
+    # Force a real desktop-sized viewport to avoid mobile rendering stubs
+    page.set_viewport_size({"width": 1920, "height": 1080})
+    
     print(f"[{clean_ticker}] Starting Sync...")
     
     chart_b64 = capture_chart(ticker)
     price = get_live_price(ticker)
 
     try:
-        # Increase navigation timeout for slow Netlify responses
-        page.goto(data_url, wait_until="domcontentloaded", timeout=120000)
+        # 1. Navigate and wait for network idle
+        page.goto(data_url, wait_until="networkidle", timeout=90000)
         
-        # INCREASED HYDRATION TIMEOUT: 120s for SPY/QQQ
-        print(f"  [{clean_ticker}] Waiting for table hydration (Max 120s)...")
+        # 2. ANTI-STALL: Scroll down then up to trigger React/Vue hydration
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        time.sleep(2)
+        page.evaluate("window.scrollTo(0, 0)")
+        
+        print(f"  [{clean_ticker}] Waiting for table data...")
+        
+        # 3. HYDRATION LOCK: Checking for more than just 10 cells to be safe
         page.wait_for_function("""() => {
-            const cells = document.querySelectorAll('td');
-            return cells.length > 20 && /[0-9]/.test(cells[10].innerText);
+            const tableRows = document.querySelectorAll('tr');
+            const tableCells = document.querySelectorAll('td');
+            // Ensure table has content and isn't just showing 'Loading...'
+            return tableRows.length > 5 && tableCells.length > 20 && /[0-9]/.test(tableCells[15].innerText);
         }""", timeout=120000)
         
-        time.sleep(5) # Colors/CSS settlement
+        # Final safety sleep
+        time.sleep(5) 
         
         rows = page.query_selector_all("tr")
         values_table, colors_table = [], []
+        
         for row in rows:
             cells = row.query_selector_all("td, th")
             if not cells: continue
+            
+            # Using innerText to ensure we get the data from the virtualized list
             v_row = [c.evaluate("el => el.innerText").strip() for c in cells]
+            
             if v_row and any(v_row):
                 values_table.append(v_row)
+                # Capture the precise computed background color
                 c_row = [rgb_to_hex(c.evaluate("el => window.getComputedStyle(el).backgroundColor")) for c in cells]
                 colors_table.append(c_row)
         
         payload = {
-            "ticker": clean_ticker, "values": values_table, "colors": colors_table,
-            "imageData": chart_b64, "price": price,
+            "ticker": clean_ticker, 
+            "values": values_table, 
+            "colors": colors_table,
+            "imageData": chart_b64, 
+            "price": price,
             "gex_sync": (datetime.datetime.now() - datetime.timedelta(hours=4)).strftime("%I:%M %p")
         }
         
         resp = requests.post(WEBAPP_URL, json=payload, timeout=60)
         print(f"  Success: {clean_ticker} synced.")
+        
     except Exception as e:
         print(f"  Failed {clean_ticker}: {e}")
     finally:
         page.close()
-
+               
 def main():
     if not WEBAPP_URL: return print("WEBAPP_URL missing")
     with sync_playwright() as p:
