@@ -20,24 +20,30 @@ def capture_vision(ticker):
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu') # Vital for GitHub Actions
     options.add_argument('--window-size=1920,1080')
+    options.add_argument('--remote-debugging-port=9222') # Helps prevent crash
     
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    # Explicitly point to the Chrome binary location in GitHub Ubuntu runners
+    options.binary_location = "/usr/bin/google-chrome"
+    
+    service = Service(ChromeDriverManager().install())
+    
     try:
-        # We target the 7-day expiry for a cleaner 'wall' visual
+        driver = webdriver.Chrome(service=service, options=options)
         url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7"
+        
+        # Increase the page load timeout for these heavy charts
+        driver.set_page_load_timeout(60) 
         driver.get(url)
         
-        # Wait for the actual chart container to render
-        WebDriverWait(driver, 30).until(
-            EC.visibility_of_element_located((By.CLASS_NAME, "highcharts-container"))
-        )
+        # Wait for the actual chart container
+        wait = WebDriverWait(driver, 45) # Increased wait time
+        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "highcharts-container")))
         
-        # Small buffer for the bar animations to slide into place
-        time.sleep(6) 
+        time.sleep(8) # Extra time for the bars to animate in
         
         raw_path = f"raw_{clean_ticker}.png"
-        crop_path = f"crop_{clean_ticker}.png"
         driver.save_screenshot(raw_path)
         
         # CROP SETTINGS: (left, top, right, bottom)
