@@ -1,77 +1,63 @@
-import os, base64, time, requests
+import os
+import time
+import requests
+import base64
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from PIL import Image
 
-# Config from GitHub Secrets
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
 TICKERS = ['NVDA']
 
-def capture_vision(ticker):
-    clean_ticker = ticker.replace('^', '')
-    print(f"[{clean_ticker}] Starting Vision Capture...")
-    
+def setup_driver():
     options = Options()
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu') # Vital for GitHub Actions
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--remote-debugging-port=9222') # Helps prevent crash
-    
-    # Explicitly point to the Chrome binary location in GitHub Ubuntu runners
-    options.binary_location = "/usr/bin/google-chrome"
-    
-    service = Service(ChromeDriverManager().install())
-    
+    # Use a wider window so the sidebar/filler doesn't push the chart out
+    options.add_argument('--window-size=1600,1200') 
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
+def main():
+    driver = setup_driver()
     try:
-        driver = webdriver.Chrome(service=service, options=options)
-        url = f"https://mztrading.netlify.app/options/analyze/{clean_ticker}?dgextab=GEX&expiry=7"
-        
-        # Increase the page load timeout for these heavy charts
-        driver.set_page_load_timeout(60) 
-        driver.get(url)
-        
-        # Wait for the actual chart container
-        wait = WebDriverWait(driver, 45) # Increased wait time
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "highcharts-container")))
-        
-        time.sleep(8) # Extra time for the bars to animate in
-        
-        raw_path = f"raw_{clean_ticker}.png"
-        driver.save_screenshot(raw_path)
-        
-        # CROP SETTINGS: (left, top, right, bottom)
-        # 1850 on the right ensures we see the strike labels
-        with Image.open(raw_path) as img:
-            img.crop((450, 180, 1850, 950)).save(crop_path)
+        for ticker in TICKERS:
+            print(f"Processing {ticker}...")
+            driver.get(f"https://mztrading.netlify.app/options/analyze/{ticker}?expiry=7")
             
-        with open(crop_path, "rb") as f:
-            img_b64 = base64.b64encode(f.read()).decode('utf-8')
+            # Wait for data to load and animations to settle
+            time.sleep(15) 
             
-        payload = {
-            "ticker": clean_ticker,
-            "imageData": img_b64
-        }
-        
-        # Send to the Vision-specific Apps Script URL
-        response = requests.post(WEBAPP_URL, json=payload, timeout=60)
-        print(f"  Result: {response.text}")
-        
-    except Exception as e:
-        print(f"  Failed {clean_ticker}: {str(e)}")
+            full_path = f"full_{ticker}.png"
+            driver.save_screenshot(full_path)
+            
+            # --- TWEAK CROP COORDINATES HERE ---
+            # (left, top, right, bottom)
+            # Increased 'left' to 300 to cut off the sidebar/filler
+            # Increased 'right' to 1300 to capture the full width of the chart
+            left = 280   
+            top = 180    
+            right = 1450 
+            bottom = 950 
+            
+            img = Image.open(full_path)
+            chart_img = img.crop((left, top, right, bottom))
+            
+            crop_path = f"{ticker}_final.png"
+            chart_img.save(crop_path)
+
+            with open(crop_path, "rb") as img_file:
+                b64_string = base64.b64encode(img_file.read()).decode('utf-8')
+
+            payload = {"ticker": ticker, "imageData": b64_string}
+            res = requests.post(WEBAPP_URL, json=payload, timeout=30)
+            print(f"Uploaded {ticker}: {res.text}")
+                
     finally:
         driver.quit()
 
 if __name__ == "__main__":
-    if not WEBAPP_URL:
-        print("CRITICAL: WEBAPP_URL secret is missing!")
-    else:
-        for ticker in TICKERS:
-            capture_vision(ticker)
-            time.sleep(2) # Prevent browser-thread congestion
+    main()
