@@ -38,7 +38,7 @@ def main():
             # (left, top, right, bottom)
             # Increased 'left' to 300 to cut off the sidebar/filler
             # Increased 'right' to 1300 to capture the full width of the chart
-            left = 280   
+            left = 500   
             top = 180    
             right = 1450 
             bottom = 950 
