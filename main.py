@@ -10,7 +10,7 @@ from PIL import Image
 
 WEBAPP_URL = os.environ.get('WEBAPP_URL')
 #TICKERS = ['NVDA']
-TICKERS = ['SPX', 'SPY', 'QQQ', 'NVDA', 'MU', 'SNDK', 'WDC' ,'AAPL', 'AMD', 'CRWV', 'NBIS', 'MSFT', 'QCOM', 'AAOI', 'ASTS', 'RDDT', 'ALAB', 'ANET','MSTR','TSLA' ]
+TICKERS = ['SPX', 'SPY', 'QQQ', 'NVDA', 'MU', 'SNDK', 'WDC' ,'AAPL', 'AMD', 'CRWV', 'NBIS', 'MSFT', 'QCOM', 'AAOI', 'ASTS', 'RDDT', 'ALAB', 'ANET','MSTR','TSLA' ,'ORCL']
 
 def setup_driver():
     options = Options()
